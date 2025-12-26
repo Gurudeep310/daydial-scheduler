@@ -1,16 +1,96 @@
-# React + Vite
+# DayDial Scheduler
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+DayDial Scheduler is a mobile- and web-friendly visual scheduling tool designed to help users plan, track, and understand how they spend their time throughout the day. 
+GitHub
 
-Currently, two official plugins are available:
+This project is built using React + Vite, providing a fast, modern frontend experience.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 🚀 Features
 
-## React Compiler
+🗓 Interactive visual scheduler – organize your day intuitively.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+📱 Responsive UI – works smoothly on both mobile and desktop.
 
-## Expanding the ESLint configuration
+⚡ Fast development with Vite – instant hot reloading and optimized builds.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+📊 Track your time visually – see how your day is structured at a glance.
+
+💡 Simple user interface focused on productivity.
+
+🧩 Project Structure
+
+The repository contains:
+```
+.
+├── public/                  # Public assets and entry HTML
+├── src/                     # React source code
+├── package.json             # Project metadata & scripts
+├── vite.config.js           # Vite configuration
+├── .gitignore
+└── README.md
+```
+
+## 📦 Technologies
+
+✅ React – UI library
+✅ Vite – development build tool
+✅ JavaScript – core language
+✅ CSS – styling
+
+## 🛠 Installation
+
+Clone the repository
+```
+git clone https://github.com/Gurudeep310/daydial-scheduler.git
+```
+
+- Change directory
+```
+cd daydial-scheduler
+```
+
+- Install dependencies
+```
+npm install
+```
+
+- 🚀 Run Locally
+
+Start the development server:
+```
+npm run dev
+```
+
+Open your browser at http://localhost:5173 (or the address shown) to explore the scheduler in action.
+
+- 📦 Build for Production
+
+To create an optimized production build:
+```
+npm run build
+```
+
+The compiled files will be in the dist/ folder.
+
+## 📌 Usage
+
+Note: The core usage depends on the scheduler UI — users can visualize and plan daily activities by dragging, clicking, or selecting time slots. The interface is intuitive and aimed at quick scheduling.
+
+(If there are specific components like day-views, events, drag-and-drop, or backend integration, you can expand this section with details once the code logic is finalized.)
+
+## 📄 Contributing
+
+Contributions, suggestions, and improvements are welcome!
+
+Fork the repository
+
+Create a feature branch
+
+Commit your changes
+
+Open a Pull Request
+
+
+## 🙏 Acknowledgments
+
+Thanks for exploring DayDial Scheduler — a helpful tool to visualize and manage daily time commitments. 
