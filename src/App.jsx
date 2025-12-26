@@ -182,14 +182,74 @@ function App() {
       if (todoId) { setTodos(prev => prev.map(t => t.id === todoId ? { ...t, completed: true } : t)); setSelectedTaskId(null); }
   };
 
-  const renderCalendar = () => {
-      const year = currentMonth.getFullYear(); const month = currentMonth.getMonth(); const daysInMonth = new Date(year, month + 1, 0).getDate(); const startDay = new Date(year, month, 1).getDay(); const days = [];
-      for (let i = 0; i < startDay; i++) days.push(<div key={`empty-${i}`} style={{ height: 36 }}></div>);
+const renderCalendar = () => {
+      const year = currentMonth.getFullYear();
+      const month = currentMonth.getMonth();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const startDay = new Date(year, month, 1).getDay();
+      const days = [];
+
+      // Empty slots for days before the 1st of the month
+      for (let i = 0; i < startDay; i++) {
+          days.push(<div key={`empty-${i}`} style={{ height: 36 }}></div>);
+      }
+
       for (let d = 1; d <= daysInMonth; d++) {
-          const currentLoopDate = new Date(year, month, d); const dateStr = formatDate(currentLoopDate); const isSelected = dateStr === formatDate(selectedDate); const isToday = dateStr === formatDate(new Date());
-          const dayEvents = events.filter(e => { const eDate = new Date(e.date); if (currentLoopDate < new Date(formatDate(eDate))) return false; if (e.date === dateStr) return true; if (e.recurrence === 'daily') return true; if (e.recurrence === 'weekly') return eDate.getDay() === currentLoopDate.getDay(); if (e.recurrence === 'monthly') return eDate.getDate() === currentLoopDate.getDate(); return false; });
+          const currentLoopDate = new Date(year, month, d);
+          const dateStr = formatDate(currentLoopDate);
+          const isSelected = dateStr === formatDate(selectedDate);
+          const isToday = dateStr === formatDate(new Date());
+
+          // Filter and Sort Events for this day
+          const dayEvents = events.filter(e => {
+              // Parse stored date (YYYY-MM-DD) to local midnight to avoid timezone shifts
+              const [y, m, d] = e.date.split('-').map(Number);
+              const eStartDate = new Date(y, m - 1, d);
+
+              // Don't show recurring events before their start date
+              if (currentLoopDate < eStartDate) return false;
+
+              if (e.date === dateStr) return true;
+              if (e.recurrence === 'daily') return true;
+              if (e.recurrence === 'weekly') return eStartDate.getDay() === currentLoopDate.getDay();
+              if (e.recurrence === 'monthly') return eStartDate.getDate() === currentLoopDate.getDate();
+              return false;
+          }).sort((a, b) => a.start.localeCompare(b.start)); // Sort by time
+
+          // Generate dots (Max 4)
           const dotColors = dayEvents.map(e => e.color || '#f97316').slice(0, 4);
-          days.push(<button key={d} onClick={() => { setSelectedDate(currentLoopDate); vibrate(20); }} style={{ height: 36, background: isSelected ? 'var(--accent)' : 'transparent', color: isSelected ? 'white' : (isToday ? 'var(--accent)' : 'var(--text-color)'), border: isToday && !isSelected ? '1px solid var(--accent)' : 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: isSelected || isToday ? 'bold' : 'normal', position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{d}{dotColors.length > 0 && !isSelected && (<div style={{ position: 'absolute', bottom: 3, display: 'flex', gap: '2px' }}>{dotColors.map((color, idx) => <span key={idx} style={{ width: 4, height: 4, borderRadius: '50%', backgroundColor: color }} />)}</div>)}</button>);
+
+          days.push(
+              <button 
+                  key={d} 
+                  onClick={() => { setSelectedDate(currentLoopDate); vibrate(20); }} 
+                  style={{ 
+                      height: 36, 
+                      background: isSelected ? 'var(--accent)' : 'transparent', 
+                      color: isSelected ? 'white' : (isToday ? 'var(--accent)' : 'var(--text-color)'), 
+                      border: isToday && !isSelected ? '1px solid var(--accent)' : 'none', 
+                      borderRadius: '8px', 
+                      cursor: 'pointer', 
+                      fontSize: '0.9rem', 
+                      fontWeight: isSelected || isToday ? 'bold' : 'normal', 
+                      position: 'relative', 
+                      display: 'flex', 
+                      flexDirection: 'column', 
+                      alignItems: 'center', 
+                      justifyContent: 'center' 
+                  }}
+              >
+                  {d}
+                  {/* Render Dots: Only if not selected, to keep selection clean */}
+                  {dotColors.length > 0 && !isSelected && (
+                      <div style={{ position: 'absolute', bottom: 3, display: 'flex', gap: '2px' }}>
+                          {dotColors.map((color, idx) => (
+                              <span key={idx} style={{ width: 4, height: 4, borderRadius: '50%', backgroundColor: color }} />
+                          ))}
+                      </div>
+                  )}
+              </button>
+          );
       }
       return days;
   };
