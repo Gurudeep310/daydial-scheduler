@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Trash2, Plus } from 'lucide-react';
+import { X, Trash2, Plus, CheckCircle } from 'lucide-react';
 
 const RECURRENCE_OPTIONS = [
     { value: 'none', label: 'Does not repeat' },
@@ -12,7 +12,7 @@ const EventModal = ({ isOpen, onClose, onSave, onDelete, initialData, categories
   const [formData, setFormData] = useState({
     title: '', date: '', start: '', end: '', description: '',
     color: categories[0].color, category: categories[0].name,
-    recurrence: 'none'
+    recurrence: 'none', completed: false
   });
   
   const [isAddingCat, setIsAddingCat] = useState(false);
@@ -26,7 +26,8 @@ const EventModal = ({ isOpen, onClose, onSave, onDelete, initialData, categories
           color: initialData.color || categories[0].color,
           category: initialData.category || categories[0].name,
           date: initialData.date || new Date().toISOString().split('T')[0],
-          recurrence: initialData.recurrence || 'none'
+          recurrence: initialData.recurrence || 'none',
+          completed: initialData.completed || false
       });
     }
   }, [initialData, categories]);
@@ -63,6 +64,18 @@ const EventModal = ({ isOpen, onClose, onSave, onDelete, initialData, categories
           <div className="form-group">
             <label>Event Title</label>
             <input required className="form-input" type="text" placeholder="Meeting, Gym, etc." value={formData.title} onChange={e => setFormData({ ...formData, title: e.target.value })} autoFocus={!initialData?.id} />
+          </div>
+
+          {/* STATUS TOGGLE */}
+          <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', background: 'var(--bg-color)', borderRadius: '8px', border: '1px solid var(--clock-border)' }}>
+             <input 
+                type="checkbox" 
+                id="event-completed" 
+                checked={formData.completed} 
+                onChange={e => setFormData({...formData, completed: e.target.checked})} 
+                style={{ width: '20px', height: '20px', accentColor: 'var(--available)' }}
+             />
+             <label htmlFor="event-completed" style={{ margin: 0, fontSize: '1rem', cursor: 'pointer' }}>Mark as Completed</label>
           </div>
 
           {/* CATEGORY SELECTOR */}

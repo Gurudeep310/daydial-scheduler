@@ -384,8 +384,8 @@ const Clock = ({ events, onSlotClick, onTimeRangeSelect, focusEvent, settings })
         const r = baseR + trackOffset;
         const isFocused = focusEvent && focusEvent.id === event.id;
         
-        const opacity = focusEvent ? (isFocused ? 1 : 0.1) : 1;
-        const filter = isFocused ? "url(#neonGlowHigh)" : "url(#neonGlow)";
+        const opacity = event.completed ? 0.3 : (focusEvent ? (isFocused ? 1 : 0.1) : 1);
+        const filter = isFocused ? "url(#neonGlowHigh)" : (event.completed ? "none" : "url(#neonGlow)");
 
         return (
             <path
@@ -405,7 +405,6 @@ const Clock = ({ events, onSlotClick, onTimeRangeSelect, focusEvent, settings })
       <g>
         {amGaps.map(g => drawGap(g, amBaseRadius))}
         {pmGaps.map(g => drawGap(g, pmBaseRadius))}
-
         {amEvents.map(e => drawEventPath(e, amBaseRadius))}
         {pmEvents.map(e => drawEventPath(e, pmBaseRadius))}
       </g>
