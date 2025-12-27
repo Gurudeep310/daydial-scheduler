@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Lock, Unlock } from 'lucide-react';
 
 // --- Math Helpers ---
 const polarToCartesian = (centerX, centerY, radius, angleInDegrees) => {
@@ -237,6 +238,7 @@ const getSleepSegments = (startStr, endStr) => {
 const Clock = ({ events, onSlotClick, onTimeRangeSelect, focusEvent, settings }) => {  const size = 400; 
   const center = size / 2;
   const svgRef = useRef(null);
+  const [isLocked, setIsLocked] = useState(true);
   
   // RADIUS CONFIG
   const amBaseRadius = 85; 
@@ -257,6 +259,7 @@ const Clock = ({ events, onSlotClick, onTimeRangeSelect, focusEvent, settings })
 
   // --- Interaction Handlers ---
   const handlePointerDown = (e) => {
+      if (isLocked) return;
       e.preventDefault();
       const rect = svgRef.current.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -632,7 +635,12 @@ const Clock = ({ events, onSlotClick, onTimeRangeSelect, focusEvent, settings })
     <svg 
         ref={svgRef}
         width="100%" height="100%" viewBox={`0 0 ${size} ${size}`} 
-        style={{ display: 'block', userSelect: 'none', touchAction: 'none' }}
+        style={{ 
+            display: 'block', 
+            userSelect: 'none', 
+            touchAction: isLocked ? 'pan-y' : 'none',
+            cursor: isLocked ? 'default' : 'pointer'
+        }}        
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -685,6 +693,31 @@ const Clock = ({ events, onSlotClick, onTimeRangeSelect, focusEvent, settings })
       {renderUtilizationGauge()}
       {renderHands()}
       {renderHUD()}
+        <g 
+            onClick={(e) => { 
+                e.stopPropagation(); // Prevent triggering other click logic
+                setIsLocked(!isLocked); 
+                if (navigator.vibrate) navigator.vibrate(20); 
+            }} 
+            // Stop pointer down propagation so clicking the button doesn't trigger 'handlePointerDown' logic if unlocked
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{ cursor: 'pointer' }} 
+            transform={`translate(${size - 50}, 50)`} // Positioned top-right
+        >
+            <circle r="20" fill="var(--bg-color)" stroke="var(--clock-border)" strokeWidth="1" opacity="0.9" />
+            {/* Embed the Icon components inside a foreignObject or render them if they are SVGs. 
+                Since lucide-react icons are SVGs, we can wrap them in a container 
+                or strictly position them. 
+                However, direct rendering of React Components inside SVG works in React. 
+                We center them by adjusting x/y offsets (icons are usually 24x24).
+            */}
+            <g transform="translate(-12, -12)">
+                {isLocked ? 
+                    <Lock size={24} color="var(--text-color)" opacity={0.5} /> : 
+                    <Unlock size={24} color="var(--accent)" />
+                }
+            </g>
+        </g>
     </svg>
   );
 };
