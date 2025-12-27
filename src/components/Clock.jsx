@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 // --- Math Helpers ---
 const polarToCartesian = (centerX, centerY, radius, angleInDegrees) => {
@@ -21,25 +21,67 @@ const describeArc = (x, y, radius, startAngle, endAngle) => {
   ].join(" ");
 };
 
-// Modified to support "Donut" slices (innerRadius -> outerRadius)
-const describeDonutSlice = (x, y, innerRadius, outerRadius, startAngle, endAngle) => {
-    const startOuter = polarToCartesian(x, y, outerRadius, endAngle);
-    const endOuter = polarToCartesian(x, y, outerRadius, startAngle);
-    const startInner = polarToCartesian(x, y, innerRadius, endAngle);
-    const endInner = polarToCartesian(x, y, innerRadius, startAngle);
+const getFreeIntervals = (events) => {
+    // 1. Create simple [start, end] intervals from events
+    let intervals = events.map(e => ({ start: e.startAngle, end: e.endAngle }));
     
-    let angleDiff = endAngle - startAngle;
-    if (angleDiff < 0) angleDiff += 360;
-    const largeArcFlag = angleDiff <= 180 ? "0" : "1";
+    // Sort by start time
+    intervals.sort((a, b) => a.start - b.start);
 
-    return [
-      "M", startOuter.x, startOuter.y,
-      "A", outerRadius, outerRadius, 0, largeArcFlag, 0, endOuter.x, endOuter.y,
-      "L", endInner.x, endInner.y,
-      "A", innerRadius, innerRadius, 0, largeArcFlag, 1, startInner.x, startInner.y, // Sweep flag 1 for inner arc reverse
-      "Z"
-    ].join(" ");
-}
+    // 2. Merge overlapping intervals to get clear "Busy" blocks
+    const merged = [];
+    if (intervals.length > 0) {
+        let curr = intervals[0];
+        for (let i = 1; i < intervals.length; i++) {
+            const next = intervals[i];
+            // If overlap, extend current block
+            if (next.start < curr.end) {
+                 curr.end = Math.max(curr.end, next.end);
+            } else {
+                merged.push(curr);
+                curr = next;
+            }
+        }
+        merged.push(curr);
+    }
+
+    // 3. Invert merged blocks to find Gaps (0 to 360 degrees)
+    const gaps = [];
+    let currentAngle = 0;
+
+    for (let interval of merged) {
+        // If there is space between current position and next event
+        if (interval.start > currentAngle) {
+            gaps.push({ start: currentAngle, end: interval.start });
+        }
+        // Move current position to end of this event
+        currentAngle = Math.max(currentAngle, interval.end);
+    }
+
+    // Check for remaining time after last event until end of circle (360)
+    // Note: If an event wraps past 360 (e.g. 11pm-1am), currentAngle will be > 360, so this won't run.
+    if (currentAngle < 360) {
+        gaps.push({ start: currentAngle, end: 360 });
+    }
+
+    return gaps;
+};
+
+// Convert Mouse Coordinates to Clock Angle (0-360) and Ring ('am' | 'pm')
+const getPointDetails = (x, y, center, amRadius, pmRadius) => {
+    const dx = x - center;
+    const dy = y - center;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    let angle = Math.atan2(dy, dx) * 180 / Math.PI + 90;
+    if (angle < 0) angle += 360;
+
+    // Determine Ring based on distance
+    // Threshold is roughly halfway between the two centers
+    const midPoint = (amRadius + pmRadius) / 2;
+    const type = dist > midPoint ? 'pm' : 'am';
+
+    return { angle, type };
+};
 
 // --- Overlap Logic ---
 const doIntervalsOverlap = (aStart, aEnd, bStart, bEnd) => {
@@ -72,107 +114,275 @@ const assignTracks = (events) => {
     return processed;
 };
 
-const Clock = ({ events, onSlotClick, focusEvent }) => {
-  // SVG Config
-  const size = 400; 
-  const center = size / 2;
-  
-  // RADIUS CONFIGURATION
-  // Inner Ring (AM)
-  const amBaseRadius = 85; 
-  const amClickInner = 40;
-  const amClickOuter = 110;
-  
-  // Outer Ring (PM) - Pushed outside the numbers
-  const pmBaseRadius = 145; 
-  const pmClickInner = 130;
-  const pmClickOuter = 190;
+const splitEventToSegments = (event) => {
+    // 1. Parse times to minutes (0 - 1440)
+    const [sH, sM] = event.start.split(':').map(Number);
+    const [eH, eM] = event.end.split(':').map(Number);
+    
+    let startMin = sH * 60 + sM;
+    let endMin = eH * 60 + eM;
+    
+    // Handle wrap-around (e.g., 11:00 PM to 6:00 AM) by creating two raw intervals
+    const intervals = [];
+    if (endMin <= startMin) {
+        intervals.push({ start: startMin, end: 1440 }); // Start to Midnight
+        intervals.push({ start: 0, end: endMin });      // Midnight to End
+    } else {
+        intervals.push({ start: startMin, end: endMin });
+    }
 
-  // Face (Ticks & Numbers) sits between 110 and 130
+    const segments = [];
+
+    // Helper to convert minutes to clock angle (0-360)
+    // 720 minutes in 12 hours. (m / 720) * 360
+    const toAngle = (m) => ((m % 720) / 720) * 360;
+
+    intervals.forEach(inv => {
+        // --- Intersect with AM (0 - 720) ---
+        const amS = Math.max(inv.start, 0);
+        const amE = Math.min(inv.end, 720);
+        if (amS < amE) {
+            segments.push({
+                ...event,
+                ring: 'am', // Mark as AM
+                startAngle: toAngle(amS),
+                endAngle: toAngle(amE)
+            });
+        }
+
+        // --- Intersect with PM (720 - 1440) ---
+        const pmS = Math.max(inv.start, 720);
+        const pmE = Math.min(inv.end, 1440);
+        if (pmS < pmE) {
+            segments.push({
+                ...event,
+                ring: 'pm', // Mark as PM
+                startAngle: toAngle(pmS),
+                endAngle: toAngle(pmE)
+            });
+        }
+    });
+
+    return segments;
+};
+
+const getSleepSegments = (startStr, endStr) => {
+    const [sH, sM] = startStr.split(':').map(Number);
+    const [eH, eM] = endStr.split(':').map(Number);
+    
+    const startMin = sH * 60 + sM;
+    const endMin = eH * 60 + eM;
+    
+    const segments = [];
+
+    // Helper to add segment
+    const addSeg = (start, end, ring) => {
+        // Convert minutes to degrees (30 deg per hour, 0.5 deg per min)
+        // Need to normalize to 0-12h cycle for the clock face
+        
+        // Ring logic:
+        // 0-720 min (00:00 - 12:00) -> AM Ring
+        // 720-1440 min (12:00 - 24:00) -> PM Ring
+        
+        // We might be spanning multiple phases, so we process minute-by-minute or chunks
+        // Simplification: Process the interval.
+        
+        let s = start;
+        let e = end;
+        
+        // Normalize 12h angles
+        const getAngle = (m) => ((m % 720) / 720) * 360;
+        
+        segments.push({
+            startAngle: getAngle(s),
+            endAngle: getAngle(e),
+            ring: ring
+        });
+    };
+
+    // Handle wrap around (e.g. 23:00 to 07:00)
+    let intervals = [];
+    if (endMin < startMin) {
+        intervals.push({ s: startMin, e: 1440 }); // Start to midnight
+        intervals.push({ s: 0, e: endMin });      // Midnight to end
+    } else {
+        intervals.push({ s: startMin, e: endMin });
+    }
+
+    intervals.forEach(inv => {
+        // Split interval into AM (0-720) and PM (720-1440) parts
+        
+        // 1. Check for AM overlap
+        const amStart = 0; const amEnd = 720;
+        const overlapStart = Math.max(inv.s, amStart);
+        const overlapEnd = Math.min(inv.e, amEnd);
+        
+        if (overlapStart < overlapEnd) {
+            addSeg(overlapStart, overlapEnd, 'am');
+        }
+
+        // 2. Check for PM overlap
+        const pmStart = 720; const pmEnd = 1440;
+        const pOverlapStart = Math.max(inv.s, pmStart);
+        const pOverlapEnd = Math.min(inv.e, pmEnd);
+        
+        if (pOverlapStart < pOverlapEnd) {
+            addSeg(pOverlapStart, pOverlapEnd, 'pm');
+        }
+    });
+
+    return segments;
+};
+
+const Clock = ({ events, onSlotClick, onTimeRangeSelect, focusEvent, settings }) => {  const size = 400; 
+  const center = size / 2;
+  const svgRef = useRef(null);
   
+  // RADIUS CONFIG
+  const amBaseRadius = 85; 
+  const pmBaseRadius = 145; 
+  const pmClickOuter = 190;
+  const gaugeRadius = 30; // Small circle in center
   const [time, setTime] = useState(new Date());
+  
+  // DRAG STATE
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState(null); // { angle, type }
+  const [dragCurrent, setDragCurrent] = useState(null); // { angle, type }
 
   useEffect(() => {
-    const timer = setInterval(() => setTime(new Date()), 1000);
+    const timer = setInterval(() => setTime(new Date()), 100);
     return () => clearInterval(timer);
   }, []);
 
-  // --- Render Interaction Zones ---
-  const renderClickSegments = () => {
-    return (
-      <>
-        {/* AM Segments (Inner) */}
-        {Array.from({ length: 12 }).map((_, i) => {
-          const startAngle = i * 30;
-          const endAngle = (i + 1) * 30;
-          return (
-            <path
-              key={`am-${i}`}
-              d={describeDonutSlice(center, center, amClickInner, amClickOuter, startAngle, endAngle)}
-              fill="transparent"
-              stroke="none"
-              style={{ cursor: 'pointer', pointerEvents: 'all' }}
-              onClick={() => onSlotClick(i)} // Passes 0-11
-            >
-                <title>{i === 0 ? 12 : i} AM</title>
-            </path>
-          );
-        })}
-        {/* PM Segments (Outer) */}
-        {Array.from({ length: 12 }).map((_, i) => {
-          const startAngle = i * 30;
-          const endAngle = (i + 1) * 30;
-          return (
-            <path
-              key={`pm-${i}`}
-              d={describeDonutSlice(center, center, pmClickInner, pmClickOuter, startAngle, endAngle)}
-              fill="transparent"
-              stroke="none"
-              style={{ cursor: 'pointer', pointerEvents: 'all' }}
-              onClick={() => onSlotClick(i + 12)} // Passes 12-23
-            >
-                <title>{i === 0 ? 12 : i} PM</title>
-            </path>
-          );
-        })}
-      </>
-    );
+  // --- Interaction Handlers ---
+  const handlePointerDown = (e) => {
+      e.preventDefault();
+      const rect = svgRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      // Scale coordinates to SVG viewBox
+      const scaleX = size / rect.width;
+      const scaleY = size / rect.height;
+      
+      const point = getPointDetails(x * scaleX, y * scaleY, center, amBaseRadius, pmBaseRadius);
+      
+      // Snap to nearest 15m (7.5 degrees) for cleaner UX
+      point.angle = Math.round(point.angle / 7.5) * 7.5;
+      
+      setIsDragging(true);
+      setDragStart(point);
+      setDragCurrent(point);
   };
 
-  // --- Render Events (Split AM/PM) ---
+  const handlePointerMove = (e) => {
+      if (!isDragging) return;
+      e.preventDefault();
+      const rect = svgRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const scaleX = size / rect.width;
+      const scaleY = size / rect.height;
+
+      const point = getPointDetails(x * scaleX, y * scaleY, center, amBaseRadius, pmBaseRadius);
+      point.angle = Math.round(point.angle / 7.5) * 7.5; // Snap
+
+      // Force current type to match start type (can't drag from AM to PM easily)
+      setDragCurrent(point);
+  };
+
+  const handlePointerUp = () => {
+      if (!isDragging) return;
+      setIsDragging(false);
+
+      // Determine Start/End Times
+      if (dragStart && dragCurrent) {
+          // Check for single click (essentially same start/end)
+          if (Math.abs(dragStart.angle - dragCurrent.angle) < 2) {
+              // It's a click
+              const hour = Math.floor(dragStart.angle / 30);
+              const hour24 = dragStart.type === 'pm' ? hour + 12 : hour;
+              onSlotClick(hour24 === 24 ? 0 : hour24);
+          } else {
+              // It's a drag - calculate range
+              let startAngle = dragStart.angle;
+              let endAngle = dragCurrent.angle;
+            
+              const angleToTime = (angle, type) => {
+                  let h = Math.floor(angle / 30);
+                  let m = Math.round((angle % 30) * 2);
+                  if (type === 'pm') h += 12;
+                  if (h === 24) h = 0;
+                  return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`;
+              };
+              
+              // Normalize for callback
+              // Let's just pass the raw calculated times.
+              const t1 = angleToTime(startAngle, dragStart.type);
+              const t2 = angleToTime(endAngle, dragStart.type);
+              
+              if (onTimeRangeSelect) onTimeRangeSelect({ start: t1, end: t2 });
+          }
+      }
+      setDragStart(null);
+      setDragCurrent(null);
+  };
+
+  // --- Render Events ---
   const renderEvents = () => {
-    // 1. Process Event Data to get Angles
-    const processedEvents = events.map(event => {
-        let [h, m] = event.start.split(':').map(Number);
-        let [endH, endM] = event.end.split(':').map(Number);
-        
-        const isPM = h >= 12; // Start time determines ring
-        
-        // Normalize angle to 0-360 on 12h face
-        const displayH = h % 12;
-        const displayEndH = endH % 12;
-        
-        let startAngle = (displayH * 30) + (m * 0.5);
-        let endAngle = (displayEndH * 30) + (endM * 0.5);
-        
-        if (endAngle <= startAngle) endAngle += 360;
-        
-        return { ...event, startAngle, endAngle, isPM };
-    });
+    const allSegments = events.flatMap(splitEventToSegments);
+    const rawAmEvents = allSegments.filter(s => s.ring === 'am');
+    const rawPmEvents = allSegments.filter(s => s.ring === 'pm');
+    const amEvents = assignTracks(rawAmEvents);
+    const pmEvents = assignTracks(rawPmEvents);
+    const amGaps = getFreeIntervals(rawAmEvents);
+    const pmGaps = getFreeIntervals(rawPmEvents);
 
-    // 2. Split and Track Assign
-    const amEvents = assignTracks(processedEvents.filter(e => !e.isPM));
-    const pmEvents = assignTracks(processedEvents.filter(e => e.isPM));
+    // const processedEvents = events.map(event => {
+    //     let [h, m] = event.start.split(':').map(Number);
+    //     let [endH, endM] = event.end.split(':').map(Number);
+    //     const isPM = h >= 12;
+        
+    //     const displayH = h % 12;
+    //     const displayEndH = endH % 12;
+        
+    //     let startAngle = (displayH * 30) + (m * 0.5);
+    //     let endAngle = (displayEndH * 30) + (endM * 0.5);
+        
+    //     if (endAngle <= startAngle) endAngle += 360;
+        
+    //     return { ...event, startAngle, endAngle, isPM };
+    // });
 
-    // 3. Render Helper
+    // const rawAmEvents = processedEvents.filter(e => !e.isPM);
+    // const rawPmEvents = processedEvents.filter(e => e.isPM);
+
+    // const amEvents = assignTracks(processedEvents.filter(e => !e.isPM));
+    // const pmEvents = assignTracks(processedEvents.filter(e => e.isPM));
+
+    // const amGaps = getFreeIntervals(rawAmEvents);
+    // const pmGaps = getFreeIntervals(rawPmEvents);
+
+    const drawGap = (gap, radius) => (
+      <path
+          key={`gap-${radius}-${gap.start}`}
+          d={describeArc(center, center, radius, gap.start, gap.end)}
+          fill="none"
+          stroke="var(--available)" /* Uses the green defined in index.css */
+          strokeWidth="6"
+          strokeLinecap="round"
+          opacity="0.1" /* Low opacity to keep it subtle */
+          style={{ pointerEvents: 'none' }}
+      />
+    );
+
     const drawEventPath = (event, baseR) => {
-        // Push overlapping events outward
         const trackOffset = event.track * 12;
         const r = baseR + trackOffset;
-        
         const isFocused = focusEvent && focusEvent.id === event.id;
-        const opacity = focusEvent ? (isFocused ? 1 : 0.1) : 0.9;
-        const strokeWidth = isFocused ? "14" : "10";
+        
+        const opacity = focusEvent ? (isFocused ? 1 : 0.1) : 1;
+        const filter = isFocused ? "url(#neonGlowHigh)" : "url(#neonGlow)";
 
         return (
             <path
@@ -180,108 +390,301 @@ const Clock = ({ events, onSlotClick, focusEvent }) => {
                 d={describeArc(center, center, r, event.startAngle, event.endAngle)}
                 fill="none"
                 stroke={event.color || "var(--occupied)"}
-                strokeWidth={strokeWidth}
+                strokeWidth={isFocused ? "10" : "6"}
                 strokeLinecap="round"
-                onClick={(e) => { e.stopPropagation(); onSlotClick(null, event); }}
-                style={{ cursor: 'pointer', opacity, transition: 'all 0.3s' }}
-            >
-                <title>{event.title}</title>
-            </path>
+                filter={filter}
+                style={{ pointerEvents: 'none', opacity, transition: 'all 0.3s' }}
+            />
         );
     };
 
     return (
-        <>
-            {amEvents.map(e => drawEventPath(e, amBaseRadius))}
-            {pmEvents.map(e => drawEventPath(e, pmBaseRadius))}
-        </>
+      <g>
+        {amGaps.map(g => drawGap(g, amBaseRadius))}
+        {pmGaps.map(g => drawGap(g, pmBaseRadius))}
+
+        {amEvents.map(e => drawEventPath(e, amBaseRadius))}
+        {pmEvents.map(e => drawEventPath(e, pmBaseRadius))}
+      </g>
     );
+  };
+
+  const renderActiveSelection = () => {
+      if (!isDragging || !dragStart || !dragCurrent) return null;
+      
+      const isPM = dragStart.type === 'pm';
+      const r = isPM ? pmBaseRadius : amBaseRadius;
+      
+      // Calculate arc path
+      // Determine direction (always shortest path visually or strictly clockwise)
+      // We will do strictly clockwise for scheduler
+      let start = dragStart.angle;
+      let end = dragCurrent.angle;
+      
+      // Visual feedback: If end is "behind" start, we assume wrap-around
+      // But for simple drag, let's just draw min to max
+      // const mn = Math.min(start, end);
+      // const mx = Math.max(start, end);
+      // If we want directional dragging:
+      
+      return (
+        <path 
+            d={describeArc(center, center, r, start, end)}
+            fill="none"
+            stroke="var(--accent)"
+            strokeWidth="12"
+            strokeLinecap="round"
+            opacity="0.5"
+            filter="url(#neonGlowHigh)"
+        />
+      );
   };
 
   const renderFace = () => {
     const markers = [];
-    const tickStart = 112; // Adjusted to sit between AM/PM rings
+    const tickStart = 114;
     const tickEnd = 120;
-    const numberRadius = 135; // Numbers slightly inside PM ring start
+    const numberRadius = 128;
 
-    for (let i = 0; i < 12; i++) {
-        const angle = i * 30;
-        const start = polarToCartesian(center, center, tickStart, angle);
+    for (let i = 0; i < 60; i++) {
+        const angle = i * 6;
+        const isHour = i % 5 === 0;
+        
+        const start = polarToCartesian(center, center, isHour ? tickStart : tickStart + 3, angle);
         const end = polarToCartesian(center, center, tickEnd, angle);
-        const numPos = polarToCartesian(center, center, 122, angle); // Numbers in the gap
         
         markers.push(
             <line
                 key={`tick-${i}`}
                 x1={start.x} y1={start.y} x2={end.x} y2={end.y}
-                stroke="#a1a1aa" strokeWidth={i % 3 === 0 ? "2" : "1"}
+                stroke={isHour ? "var(--text-color)" : "var(--clock-border)"} 
+                strokeWidth={isHour ? "2" : "1"}
+                strokeLinecap="round"
+                opacity={isHour ? 0.9 : 0.4}
             />
         );
-        markers.push(
-            <text
-                key={`num-${i}`}
-                x={numPos.x} y={numPos.y}
-                textAnchor="middle" dominantBaseline="middle"
-                fill="var(--text-color)" fontSize="11" fontWeight="600"
-            >
-                {i === 0 ? 12 : i}
-            </text>
-        );
+
+        if (isHour) {
+             const h = i / 5;
+             const numPos = polarToCartesian(center, center, numberRadius, angle);
+             markers.push(
+                <text
+                    key={`num-${h}`}
+                    x={numPos.x} y={numPos.y}
+                    textAnchor="middle" dominantBaseline="middle"
+                    fill="var(--text-color)" 
+                    fontSize="12" 
+                    fontWeight="600"
+                    style={{ fontVariantNumeric: "tabular-nums", fontFamily: 'system-ui, sans-serif' }}
+                >
+                    {h === 0 ? 12 : h}
+                </text>
+            );
+        }
     }
     return markers;
   };
 
   const renderHands = () => {
+    if (isDragging) return null; // Hide hands when selecting to show HUD
+
     const h = time.getHours();
     const m = time.getMinutes();
     const s = time.getSeconds();
+    const ms = time.getMilliseconds();
     
-    // Calculate angle on 12h face
     const hAngle = (h % 12) * 30 + (m * 0.5);
     const mAngle = m * 6 + (s * 0.1);
-    const sAngle = s * 6;
-
-    // Hand styling
-    const handStyle = { stroke: 'var(--hand-color)', strokeLinecap: 'round' };
+    const sAngle = s * 6 + (ms * 0.006);
 
     return (
-      <>
-        {/* Hour Hand */}
-        <line x1={center} y1={center} x2={polarToCartesian(center, center, 70, hAngle).x} y2={polarToCartesian(center, center, 70, hAngle).y} {...handStyle} strokeWidth="5" />
-        {/* Minute Hand */}
-        <line x1={center} y1={center} x2={polarToCartesian(center, center, 95, mAngle).x} y2={polarToCartesian(center, center, 95, mAngle).y} {...handStyle} strokeWidth="3" />
-        {/* Second Hand */}
-        <line x1={center} y1={center} x2={polarToCartesian(center, center, 100, sAngle).x} y2={polarToCartesian(center, center, 100, sAngle).y} stroke="var(--second-hand-color)" strokeWidth="2" />
-      </>
+      <g filter="url(#handShadow)">
+        <g transform={`rotate(${hAngle}, ${center}, ${center})`}>
+            <rect x={center - 4} y={center - 60} width="8" height="75" rx="4" fill="var(--text-color)" />
+            <rect x={center - 1.5} y={center - 55} width="3" height="40" rx="1.5" fill="var(--bg-color)" opacity="0.8" />
+        </g>
+        <g transform={`rotate(${mAngle}, ${center}, ${center})`}>
+            <rect x={center - 3} y={center - 90} width="6" height="105" rx="3" fill="var(--text-color)" />
+            <rect x={center - 1} y={center - 85} width="2" height="60" rx="1" fill="var(--bg-color)" opacity="0.8" />
+        </g>
+        <g transform={`rotate(${sAngle}, ${center}, ${center})`}>
+            <line x1={center} y1={center + 20} x2={center} y2={center - 110} stroke="var(--second-hand-color)" strokeWidth="1.5" strokeLinecap="round" />
+            <circle cx={center} cy={center - 110} r="2" fill="var(--second-hand-color)" />
+            <circle cx={center} cy={center} r="3" fill="var(--bg-color)" stroke="var(--second-hand-color)" strokeWidth="2" />
+        </g>
+      </g>
+    );
+  };
+
+  const renderHUD = () => {
+      if (!isDragging || !dragStart || !dragCurrent) return null;
+      
+      const angleToTimeStr = (angle, type) => {
+          let h = Math.floor(angle / 30);
+          let m = Math.floor((angle % 30) * 2);
+          // snap minutes to 00, 15, 30, 45 visual
+          m = Math.round(m / 15) * 15;
+          if (m === 60) { m = 0; h++; }
+          
+          if (h === 0) h = 12;
+          return `${h}:${m.toString().padStart(2, '0')}`;
+      };
+
+      const t1 = angleToTimeStr(dragStart.angle, dragStart.type);
+      const t2 = angleToTimeStr(dragCurrent.angle, dragStart.type);
+      const period = dragStart.type.toUpperCase();
+
+      return (
+          <g>
+              <circle cx={center} cy={center} r="45" fill="var(--bg-color)" stroke="var(--accent)" strokeWidth="2" opacity="0.9" />
+              <text x={center} y={center - 10} textAnchor="middle" fontSize="10" fill="var(--text-color)" opacity="0.7">SCHEDULING</text>
+              <text x={center} y={center + 8} textAnchor="middle" fontSize="14" fontWeight="bold" fill="var(--text-color)">
+                  {t1} - {t2}
+              </text>
+              <text x={center} y={center + 22} textAnchor="middle" fontSize="10" fontWeight="bold" fill="var(--accent)">{period}</text>
+          </g>
+      );
+  };
+
+  // Circular "Complication" for Date
+  const renderComplication = () => {
+      const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+      const dayName = days[time.getDay()];
+      const dayNum = time.getDate();
+      const cx = center + 55;
+      const cy = center;
+
+      return (
+          <g transform={`translate(${cx}, ${cy})`}>
+              <circle r="14" fill="var(--bg-color)" stroke="var(--clock-border)" strokeWidth="1" />
+              <text y="-3" textAnchor="middle" fontSize="6" fontWeight="bold" fill="var(--text-color)" opacity="0.6">{dayName}</text>
+              <text y="7" textAnchor="middle" fontSize="9" fontWeight="bold" fill="var(--text-color)">{dayNum}</text>
+          </g>
+      );
+  };
+
+  const renderSleep = () => {
+    if (!settings) return null;
+    const segments = getSleepSegments(settings.sleepStart, settings.sleepEnd);
+
+    return segments.map((seg, i) => (
+        <path
+        key={`sleep-${i}`}
+        d={describeArc(center, center, seg.ring === 'am' ? amBaseRadius : pmBaseRadius, seg.startAngle, seg.endAngle)}
+        fill="none"
+        stroke="var(--clock-face)" // Or a specific sleep color
+        strokeWidth="24"            // Wide enough to cover the track
+        strokeLinecap="butt"
+        opacity="0.8"               // High opacity to look "blocked"
+        filter="brightness(0.8)"    // Darken it slightly
+        style={{ pointerEvents: 'none' }}
+        />
+    ));
+  };
+
+   // --- Render Utilization Gauge (Center) ---
+  const renderUtilizationGauge = () => {
+    if (!settings) return null;
+    
+    // Calculate Total Minutes Used
+    let totalMinutes = 0;
+    events.forEach(e => {
+    let [h, m] = e.start.split(':').map(Number);
+    let [endH, endM] = e.end.split(':').map(Number);
+    let dur = (endH * 60 + endM) - (h * 60 + m);
+    if (dur < 0) dur += 1440;
+    totalMinutes += dur;
+    });
+
+    const capacityMinutes = settings.dailyCapacityHours * 60;
+    // Cap at 100% for the arc, but maybe change color if over
+    const percentage = Math.min(1, totalMinutes / capacityMinutes);
+    const isOver = totalMinutes > capacityMinutes;
+    
+    const startAngle = 0;
+    const endAngle = percentage * 360;
+
+    return (
+        <g>
+            {/* Background Track */}
+            <circle cx={center} cy={center} r={gaugeRadius} fill="none" stroke="var(--clock-border)" strokeWidth="4" opacity="0.3" />
+            
+            {/* Active Arc */}
+            {percentage > 0 && (
+                <path
+                d={describeArc(center, center, gaugeRadius, 0, endAngle)}
+                fill="none"
+                stroke={isOver ? "#ef4444" : "var(--accent)"} // Red if over capacity
+                strokeWidth="4"
+                strokeLinecap="round"
+                transform={`rotate(180, ${center}, ${center})`} // Start from bottom (6 o'clock) or top? 180 makes it start bottom like a gauge
+                opacity="0.8"
+                />
+            )}
+            
+            {/* Optional: Text Label inside */}
+            {/* <text x={center} y={center + 45} textAnchor="middle" fontSize="10" fill="var(--text-color)" opacity="0.6">{Math.round(percentage*100)}%</text> */}
+        </g>
     );
   };
 
   return (
-    <svg width="100%" height="100%" viewBox={`0 0 ${size} ${size}`} style={{ display: 'block' }}>
-      {/* Background Circles for Context */}
-      <circle cx={center} cy={center} r={pmClickOuter} fill="var(--clock-face)" opacity="0.1" />
-      <circle cx={center} cy={center} r={amClickOuter} fill="var(--clock-face)" opacity="0.1" />
-      
-      {/* Rings Visual Guide (Optional - Dashed line separating AM/PM) */}
-      <circle cx={center} cy={center} r="115" fill="none" stroke="var(--clock-border)" strokeWidth="1" strokeDasharray="4 4" />
+    <svg 
+        ref={svgRef}
+        width="100%" height="100%" viewBox={`0 0 ${size} ${size}`} 
+        style={{ display: 'block', userSelect: 'none', touchAction: 'none' }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerUp}
+    >
+      <defs>
+        <filter id="handShadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="3" />
+            <feOffset dx="2" dy="3" result="offsetblur" />
+            <feComponentTransfer><feFuncA type="linear" slope="0.3"/></feComponentTransfer>
+            <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
+            <feComponentTransfer in="coloredBlur" result="glowAlpha"><feFuncA type="linear" slope="0.5"/></feComponentTransfer>
+            <feMerge><feMergeNode in="glowAlpha"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+         <filter id="neonGlowHigh" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+            <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <linearGradient id="bezelGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#94a3b8" />    {/* Darker Silver */}
+            <stop offset="50%" stopColor="#64748b" />   {/* Steel Gray */}
+            <stop offset="100%" stopColor="#475569" />  {/* Dark Slate */}
+        </linearGradient>
+        <radialGradient id="faceGradient" cx="50%" cy="50%" r="50%">
+            <stop offset="80%" stopColor="var(--clock-face)" />
+            <stop offset="100%" stopColor="rgba(0,0,0,0.1)" />
+        </radialGradient>
+      </defs>
 
+      {/* --- CHASSIS --- */}
+      <circle cx={center} cy={center} r={pmClickOuter} fill="url(#bezelGradient)" />
+      <circle cx={center} cy={center} r={pmClickOuter - 4} fill="url(#faceGradient)" stroke="var(--clock-border)" strokeWidth="1" />
+      
+      {/* --- MARKINGS --- */}
+      <circle cx={center} cy={center} r={amBaseRadius} fill="none" stroke="var(--clock-border)" strokeWidth="1" opacity="0.1" strokeDasharray="1 3" />
+      <circle cx={center} cy={center} r={pmBaseRadius} fill="none" stroke="var(--clock-border)" strokeWidth="1" opacity="0.1" strokeDasharray="1 3" />
+
+      <text x={center} y={center - 45} textAnchor="middle" fontSize="8" fontWeight="800" fill="var(--text-color)" opacity="0.15" letterSpacing="1px">AM</text>
+      <text x={center} y={center - 155} textAnchor="middle" fontSize="8" fontWeight="800" fill="var(--text-color)" opacity="0.15" letterSpacing="1px">PM</text>
+
+      {/* --- CONTENT --- */}
+      {renderSleep()}
       {renderEvents()}
+      {renderActiveSelection()}
       {renderFace()}
+      {renderComplication()}
+      {renderUtilizationGauge()}
       {renderHands()}
-      
-      <circle cx={center} cy={center} r="4" fill="var(--clock-face)" stroke="var(--hand-color)" strokeWidth="2" />
-      
-      {renderClickSegments()}
-      
-      {/* AM/PM Labels for Clarity */}
-      <text x={center} y={center - 55} textAnchor="middle" fontSize="10" fill="var(--text-color)" opacity="0.4" pointerEvents="none">AM</text>
-      <text x={center} y={center - 160} textAnchor="middle" fontSize="10" fill="var(--text-color)" opacity="0.4" pointerEvents="none">PM</text>
-
-      {focusEvent && (
-        <text x="50%" y="70%" textAnchor="middle" fill="var(--accent)" fontSize="12" fontWeight="bold" style={{ pointerEvents: 'none' }}>
-            FOCUS MODE
-        </text>
-      )}
+      {renderHUD()}
     </svg>
   );
 };

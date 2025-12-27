@@ -1,12 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { X, Copy, Download, Upload, Check, Share2, Trash2, Database } from 'lucide-react';
+import { X, Copy, Download, Upload, Check, Share2, Trash2, Database, Settings as SettingsIcon } from 'lucide-react';
 
-const DataModal = ({ isOpen, onClose, data, onRestore, onCleanup }) => {
-  const [mode, setMode] = useState('export'); // 'export' | 'import' | 'manage'
+const DataModal = ({ isOpen, onClose, data, onRestore, onCleanup, settings, onUpdateSettings }) => {
+  const [mode, setMode] = useState('settings'); // Default to settings for visibility, or keep 'export'
   const [jsonString, setJsonString] = useState('');
   const [importText, setImportText] = useState('');
   const [status, setStatus] = useState('');
   const [dataSize, setDataSize] = useState(0);
+  const [localSettings, setLocalSettings] = useState(settings || { dailyCapacityHours: 8, sleepStart: '23:00', sleepEnd: '07:00' });
+  useEffect(() => {
+    if (isOpen && settings) {
+      setLocalSettings(settings);
+    }
+  }, [isOpen, settings]);
 
   useEffect(() => {
     if (isOpen) {
@@ -21,6 +27,15 @@ const DataModal = ({ isOpen, onClose, data, onRestore, onCleanup }) => {
   }, [isOpen, data]);
 
   if (!isOpen) return null;
+
+  // Handler for saving settings
+  const saveSettings = () => {
+    onUpdateSettings(localSettings);
+    // Instead of alert, set status to 'saved'
+    setStatus('saved');
+    // Reset after 2 seconds
+    setTimeout(() => setStatus(''), 2000);
+  };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(jsonString).then(() => {
@@ -61,6 +76,7 @@ const DataModal = ({ isOpen, onClose, data, onRestore, onCleanup }) => {
       <div className="modal-content" onClick={e => e.stopPropagation()} style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         
         <div style={{ display: 'flex', borderBottom: '1px solid var(--clock-border)' }}>
+            <button onClick={() => setMode('settings')} style={{ flex: 1, padding: '14px', background: 'transparent', border: 'none', borderBottom: mode === 'settings' ? '3px solid var(--accent)' : 'none', fontWeight: 'bold', color: 'var(--text-color)', fontSize: '0.9rem' }}>Settings</button>
             <button onClick={() => setMode('export')} style={{ flex: 1, padding: '14px', background: 'transparent', border: 'none', borderBottom: mode === 'export' ? '3px solid var(--accent)' : 'none', fontWeight: 'bold', color: 'var(--text-color)', fontSize: '0.9rem' }}>Backup</button>
             <button onClick={() => setMode('import')} style={{ flex: 1, padding: '14px', background: 'transparent', border: 'none', borderBottom: mode === 'import' ? '3px solid var(--accent)' : 'none', fontWeight: 'bold', color: 'var(--text-color)', fontSize: '0.9rem' }}>Restore</button>
             <button onClick={() => setMode('manage')} style={{ flex: 1, padding: '14px', background: 'transparent', border: 'none', borderBottom: mode === 'manage' ? '3px solid var(--accent)' : 'none', fontWeight: 'bold', color: 'var(--text-color)', fontSize: '0.9rem' }}>Manage</button>
@@ -68,7 +84,49 @@ const DataModal = ({ isOpen, onClose, data, onRestore, onCleanup }) => {
         </div>
 
         <div style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            
+            {mode === 'settings' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', opacity: 0.7 }}>
+                        <SettingsIcon size={20} />
+                        <h3 style={{ margin: 0, fontSize: '1rem' }}>Preferences</h3>
+                    </div>
+
+                    <div className="form-group">
+                        <label>Daily Work Capacity (Hours)</label>
+                        <input 
+                            type="number" 
+                            className="form-input" 
+                            value={localSettings.dailyCapacityHours} 
+                            onChange={e => setLocalSettings({...localSettings, dailyCapacityHours: parseFloat(e.target.value)})}
+                        />
+                        <small style={{ opacity: 0.6 }}>Used for the utilization gauge.</small>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                        <div className="form-group" style={{ flex: 1 }}>
+                            <label>Sleep Start</label>
+                            <input 
+                                type="time" 
+                                className="form-input" 
+                                value={localSettings.sleepStart} 
+                                onChange={e => setLocalSettings({...localSettings, sleepStart: e.target.value})}
+                            />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                            <label>Sleep End</label>
+                            <input 
+                                type="time" 
+                                className="form-input" 
+                                value={localSettings.sleepEnd} 
+                                onChange={e => setLocalSettings({...localSettings, sleepEnd: e.target.value})}
+                            />
+                        </div>
+                    </div>
+
+                    <button onClick={saveSettings} style={{ background: 'var(--accent)', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>Save Changes</button>
+                </div>
+            )}
+
             {mode === 'export' && (
                 <>
                     <p style={{ margin: 0, fontSize: '0.9rem', opacity: 0.8 }}>Save all your data.</p>

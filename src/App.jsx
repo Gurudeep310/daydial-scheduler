@@ -60,6 +60,22 @@ const useThemeColor = (theme) => {
 function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   useThemeColor(theme);
+
+  const [userSettings, setUserSettings] = useState(() => 
+    JSON.parse(localStorage.getItem('scheduler_settings') || JSON.stringify({
+        dailyCapacityHours: 8,
+        sleepStart: '23:00',
+        sleepEnd: '07:00'
+    }))
+   );
+   useEffect(() => {
+        localStorage.setItem('scheduler_settings', JSON.stringify(userSettings));
+    }, [userSettings]);
+
+   const handleUpdateSettings = (newSettings) => {
+        setUserSettings({ ...userSettings, ...newSettings });
+    };
+
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('theme', theme); }, [theme]);
   const toggleTheme = () => { vibrate(30); setTheme(prev => prev === 'light' ? 'dark' : 'light'); };
 
@@ -182,7 +198,23 @@ function App() {
       if (todoId) { setTodos(prev => prev.map(t => t.id === todoId ? { ...t, completed: true } : t)); setSelectedTaskId(null); }
   };
 
-const renderCalendar = () => {
+  const handleTimeRangeSelect = ({ start, end }) => {
+      vibrate(50);
+      setEditingEvent({ 
+        id: null, 
+        title: '', 
+        color: categories[0].color, 
+        category: categories[0].name, 
+        date: formatDate(selectedDate), 
+        start: start, 
+        end: end, 
+        description: '', 
+        recurrence: 'none' 
+    });
+    setIsModalOpen(true);
+  };
+
+  const renderCalendar = () => {
       const year = currentMonth.getFullYear();
       const month = currentMonth.getMonth();
       const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -254,8 +286,82 @@ const renderCalendar = () => {
       return days;
   };
 
-  const currentDayEvents = events.filter(e => { const sDate = new Date(formatDate(selectedDate)); const eDate = new Date(e.date); if (sDate < new Date(formatDate(eDate))) return false; if (e.date === formatDate(selectedDate)) return true; if (e.recurrence === 'daily') return true; if (e.recurrence === 'weekly') return eDate.getDay() === sDate.getDay(); if (e.recurrence === 'monthly') return eDate.getDate() === sDate.getDate(); return false; });
-  const visibleEvents = currentDayEvents.sort((a,b) => a.start.localeCompare(b.start));
+  const getDisplayEventsForDate = (targetDate, allEvents) => {
+      const targetStr = formatDate(targetDate); // YYYY-MM-DD
+      const targetStart = new Date(`${targetStr}T00:00:00`);
+      const targetEnd = new Date(`${targetStr}T23:59:59`);
+
+      return allEvents.map(e => {
+          // 1. Calculate specific Event Start/End DateTimes
+          // If e.end < e.start, we assume it ends the next day.
+          const eStartBase = new Date(`${e.date}T${e.start}:00`);
+          let eEndBase = new Date(`${e.date}T${e.end}:00`);
+          
+          if (eEndBase < eStartBase) {
+              eEndBase.setDate(eEndBase.getDate() + 1);
+          }
+
+          // Handle Recurrence (Simple Projection)
+          // Ideally, a recurrence library handles this, but for this simpler app:
+          // We only check if the *recurrence rule* lands on 'targetDate'.
+          
+          let effectiveStart = eStartBase;
+          let effectiveEnd = eEndBase;
+          let isRelevant = false;
+
+          // Check Recurrence matches Target Date
+          if (e.recurrence === 'daily') {
+             isRelevant = true; // Happens every day
+             // Project times to target date
+             effectiveStart = new Date(`${targetStr}T${e.start}:00`);
+             effectiveEnd = new Date(`${targetStr}T${e.end}:00`);
+             if (effectiveEnd < effectiveStart) effectiveEnd.setDate(effectiveEnd.getDate() + 1);
+          } 
+          else if (e.recurrence === 'weekly' && eStartBase.getDay() === targetDate.getDay()) {
+             isRelevant = true;
+             effectiveStart = new Date(`${targetStr}T${e.start}:00`);
+             effectiveEnd = new Date(`${targetStr}T${e.end}:00`);
+             if (effectiveEnd < effectiveStart) effectiveEnd.setDate(effectiveEnd.getDate() + 1);
+          }
+          else if (e.date === targetStr) {
+             isRelevant = true; // Is exactly today
+          }
+          // Check "Yesterday's" spillover for non-recurring
+          else {
+             // If event started yesterday (target - 1) and ends after targetStart
+             // (Simple check: is target inside the event range?)
+             if (effectiveStart < targetEnd && effectiveEnd > targetStart) {
+                 isRelevant = true;
+             }
+          }
+
+          if (!isRelevant) return null;
+
+          // 2. CLIP Logic: Slice the event to fit onto the Target Day's Clock
+          // The Clock component only understands 00:00 to 24:00 for the current view.
+          
+          // Intersection Start
+          const showStart = effectiveStart < targetStart ? targetStart : effectiveStart;
+          // Intersection End
+          const showEnd = effectiveEnd > targetEnd ? targetEnd : effectiveEnd;
+
+          // If intersection is invalid (e.g. event is completely in past/future of this day), skip
+          if (showStart >= showEnd) return null;
+
+          // Format back to HH:MM for the Clock
+          const toHHMM = (d) => `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+
+          return {
+              ...e,
+              date: targetStr, // Fake date for display match
+              start: toHHMM(showStart),
+              end: toHHMM(showEnd)
+          };
+      }).filter(Boolean).sort((a,b) => a.start.localeCompare(b.start));
+  };
+
+  const currentDayEvents = getDisplayEventsForDate(selectedDate, events);
+  const visibleEvents = currentDayEvents; // Reuse for the list view
 
   const TaskList = ({ isMobile }) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
@@ -302,12 +408,16 @@ const renderCalendar = () => {
                     <div style={{ fontWeight: '600' }}>{currentMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}</div>
                     <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1))} style={{ background: 'none', border: 'none', padding: '8px', color: 'var(--text-color)' }}><ChevronRight size={24} /></button>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center', marginBottom: '4px' }}>{['S','M','T','W','T','F','S'].map(d => <div key={d} style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-color)', opacity: 0.6 }}>{d}</div>)}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center', marginBottom: '4px' }}>
+                    {['S','M','T','W','T','F','S'].map((d, i) => (
+                        <div key={i} style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-color)', opacity: 0.6 }}>{d}</div>
+                    ))}
+                </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>{renderCalendar()}</div>
             </div>
 
             <div ref={clockRef} onDragOver={(e) => e.preventDefault()} onDrop={handleDropOnClock} style={{ width: '100%', maxWidth: 320, aspectRatio: '1/1', border: selectedTaskId ? '2px dashed var(--accent)' : 'none', borderRadius: '50%', transition: 'border 0.3s', position: 'relative', touchAction: 'none' }}>
-                <Clock events={currentDayEvents} onSlotClick={handleSlotClick} focusEvent={focusEvent} />
+                <Clock events={currentDayEvents} onSlotClick={handleSlotClick} onTimeRangeSelect={handleTimeRangeSelect} focusEvent={focusEvent} settings={userSettings}/>
             </div>
             {selectedTaskId && <div style={{ background: 'var(--accent)', color: 'white', padding: '8px 16px', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.9rem', marginTop: '-10px', animation: 'bounce 1s infinite' }}>Tap a time slot to schedule!</div>}
             
@@ -358,8 +468,8 @@ const renderCalendar = () => {
       )}
       
       <EventModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveEvent} onDelete={handleDeleteEvent} initialData={editingEvent} categories={categories} onAddCategory={handleAddCategory} />
-      <StatsModal isOpen={isStatsOpen} onClose={() => setIsStatsOpen(false)} events={currentDayEvents} categories={categories} />
-      <DataModal isOpen={isDataModalOpen} onClose={() => setIsDataModalOpen(false)} data={{ events, todos, categories }} onRestore={handleRestoreData} onCleanup={handleCleanup} />
+      <StatsModal isOpen={isStatsOpen} onClose={() => setIsStatsOpen(false)} events={currentDayEvents} categories={categories} settings={userSettings}/>
+      <DataModal isOpen={isDataModalOpen} onClose={() => setIsDataModalOpen(false)} data={{ events, todos, categories }} onRestore={handleRestoreData} onCleanup={handleCleanup} settings={userSettings} onUpdateSettings={handleUpdateSettings}/>
     </>
   );
 }

@@ -1,8 +1,12 @@
 import React from 'react';
 import { X, PieChart, Clock, Activity } from 'lucide-react';
 
-const StatsModal = ({ isOpen, onClose, events, categories }) => {
+const StatsModal = ({ isOpen, onClose, events, categories, settings }) => {
   if (!isOpen) return null;
+
+// Use settings or defaults
+  const capacityHours = settings?.dailyCapacityHours || 8;
+  const capacityMinutes = capacityHours * 60;
 
   // --- Calculate Metrics ---
   const totalEvents = events.length;
@@ -16,7 +20,6 @@ const StatsModal = ({ isOpen, onClose, events, categories }) => {
       
       let duration = (endH * 60 + endM) - (startH * 60 + startM);
       if (duration < 0) duration += 24 * 60;
-      
       totalMinutes += duration;
 
       // 1. Category Distribution
@@ -35,7 +38,8 @@ const StatsModal = ({ isOpen, onClose, events, categories }) => {
   });
 
   const totalHours = (totalMinutes / 60).toFixed(1);
-  const percentOccupied = Math.min(100, Math.round((totalMinutes / (24 * 60)) * 100));
+  const rawPercent = Math.round((totalMinutes / capacityMinutes) * 100);
+  const percentOccupied = rawPercent
 
   // Find Busiest Period
   const busiestPeriod = Object.keys(timeOfDay).reduce((a, b) => timeOfDay[a] > timeOfDay[b] ? a : b);
@@ -74,12 +78,19 @@ const StatsModal = ({ isOpen, onClose, events, categories }) => {
             {/* Utilization Bar */}
             <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', marginBottom: '6px' }}>
-                    <span>Day Utilization</span>
+                    <span>Capacity Used ({capacityHours}h goal)</span>
                     <span style={{ fontWeight: 'bold' }}>{percentOccupied}%</span>
                 </div>
                 <div style={{ width: '100%', height: '12px', background: 'var(--clock-border)', borderRadius: '6px', overflow: 'hidden' }}>
-                    <div style={{ width: `${percentOccupied}%`, height: '100%', background: percentOccupied > 50 ? 'var(--occupied)' : 'var(--available)', transition: 'width 0.5s' }}></div>
+                    <div style={{ 
+                        width: `${Math.min(100, percentOccupied)}%`, 
+                        height: '100%', 
+                        // Turn red if over capacity
+                        background: percentOccupied > 100 ? '#ef4444' : (percentOccupied > 50 ? 'var(--occupied)' : 'var(--available)'), 
+                        transition: 'width 0.5s' 
+                    }}></div>
                 </div>
+                {percentOccupied > 100 && <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '4px' }}>Over capacity by {percentOccupied - 100}%</div>}
             </div>
 
             {/* Category Breakdown */}
