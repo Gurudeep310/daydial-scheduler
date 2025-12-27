@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/daydial-scheduler/sw.js', { scope: '/daydial-scheduler/' })})}
