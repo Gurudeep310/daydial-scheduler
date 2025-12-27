@@ -4,10 +4,11 @@ import EventModal from './components/EventModal';
 import StatsModal from './components/StatsModal';
 import DataModal from './components/DataModal';
 import CollapsibleCalendar from './components/CollapsibleCalendar';
+import SyncModal from './components/SyncModal';
 import { 
     Calendar as CalendarIcon, ChevronLeft, ChevronRight, BarChart2, 
-    PlayCircle, PauseCircle, CheckSquare, GripVertical, Trash2, Plus, 
-    Square, Check, Menu, X, List, Moon, Sun, Settings
+    PlayCircle, PauseCircle, CheckSquare, CheckCircle, GripVertical, Trash2, Plus, 
+    Square, Check, Menu, X, List, Moon, Sun, Settings, RefreshCw, Circle
 } from 'lucide-react';
 
 const formatDate = (date) => {
@@ -90,7 +91,7 @@ function App() {
   const [categories, setCategories] = useState(() => JSON.parse(localStorage.getItem('scheduler_categories') || JSON.stringify(DEFAULT_CATEGORIES)));
 
   const [selectedDate, setSelectedDate] = useState(new Date());
-  
+  const [isSyncOpen, setIsSyncOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [isDataModalOpen, setIsDataModalOpen] = useState(false);
@@ -98,6 +99,7 @@ function App() {
   const [editingEvent, setEditingEvent] = useState(null);
   const [focusEvent, setFocusEvent] = useState(null);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
+  const [selectedEventIds, setSelectedEventIds] = useState(new Set());
   
   useBackButton(isModalOpen, () => setIsModalOpen(false));
   useBackButton(isStatsOpen, () => setIsStatsOpen(false));
@@ -112,6 +114,46 @@ function App() {
   useEffect(() => { localStorage.setItem('scheduler_categories', JSON.stringify(categories)); }, [categories]);
 
   // --- Handlers ---
+  const toggleEventSelection = (id) => {
+    const newSet = new Set(selectedEventIds);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setSelectedEventIds(newSet);
+  };
+
+  const deleteSelectedEvents = () => {
+    if (selectedEventIds.size === 0) return;
+    if (confirm(`Delete ${selectedEventIds.size} events?`)) {
+        setEvents(events.filter(e => !selectedEventIds.has(e.id)));
+        setSelectedEventIds(new Set());
+    }
+  };
+
+  const toggleEventComplete = (e, id) => {
+      e.stopPropagation();
+      setEvents(events.map(ev => ev.id === id ? { ...ev, completed: !ev.completed } : ev));
+      vibrate(20);
+  };
+
+  const clearCompletedTodos = () => {
+      const completedCount = todos.filter(t => t.completed).length;
+      if (completedCount === 0) return;
+      if (confirm(`Clear ${completedCount} completed tasks?`)) {
+          setTodos(todos.filter(t => !t.completed));
+          vibrate(50);
+      }
+  };
+
+  const handleSyncComplete = (incomingData) => {
+        // REPLACE OPERATION:
+        // Directly overwrite local state with incoming data.
+        if (incomingData.events) setEvents(incomingData.events);
+        if (incomingData.todos) setTodos(incomingData.todos);
+        if (incomingData.categories) setCategories(incomingData.categories);
+        
+        vibrate(100);
+  };
+
   const handleRestoreData = (data) => {
       if (Array.isArray(data)) setEvents(data);
       else {
@@ -136,6 +178,11 @@ function App() {
 
   const handleSlotClick = (hour24, existingEvent = null) => {
     vibrate(50);
+    if (selectedEventIds.size > 0 && existingEvent) {
+        toggleEventSelection(existingEvent.id);
+        return;
+    }
+
     if (existingEvent) {
       setEditingEvent(existingEvent);
       setIsModalOpen(true);
@@ -285,8 +332,25 @@ function App() {
   const currentDayEvents = getDisplayEventsForDate(selectedDate, events);
   const visibleEvents = currentDayEvents; // Reuse for the list view
 
-  const TaskList = ({ isMobile }) => (
+  const TaskList = ({ isMobile }) => {
+      const hasCompleted = todos.some(t => t.completed);
+    return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+          {/* BULK DELETE BUTTON FOR TODOS */}
+          {hasCompleted && (
+              <button 
+                onClick={clearCompletedTodos}
+                style={{ 
+                    marginBottom: '8px', padding: '8px', fontSize: '0.8rem', 
+                    color: '#ef4444', border: '1px solid #ef4444', 
+                    background: 'rgba(239,68,68,0.1)', borderRadius: '6px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' 
+                }}
+              >
+                <Trash2 size={14} /> Clear Completed
+              </button>
+          )}
+
           {todos.map(todo => (
               <div key={todo.id} draggable={!isMobile} onDragStart={(e) => { e.dataTransfer.setData("todoId", todo.id); e.dataTransfer.setData("todoTitle", todo.title); }} onClick={() => handleTaskSelect(todo.id)} className="task-item" style={{ padding: '12px', background: selectedTaskId === todo.id ? (theme === 'dark' ? '#1e3a8a' : '#e0f2fe') : (todo.completed ? 'var(--bg-color)' : 'var(--bg-color)'), borderRadius: '8px', border: selectedTaskId === todo.id ? '1px solid var(--accent)' : '1px solid var(--clock-border)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', opacity: todo.completed ? 0.6 : 1, transition: 'all 0.2s', touchAction: 'manipulation' }}>
                   {!isMobile && <GripVertical size={16} style={{ color: 'var(--text-color)', opacity: 0.5 }} />}
@@ -300,7 +364,8 @@ function App() {
               <div style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', opacity: 0.5, pointerEvents: 'none' }}><Plus size={20} /></div>
           </div>
       </div>
-  );
+    );
+  };
 
   return (
     <>
@@ -316,6 +381,7 @@ function App() {
             <div className="header-actions" style={{ display: 'flex', gap: '8px' }}>
                 <button onClick={() => setIsStatsOpen(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-color)' }}><BarChart2 size={20} /></button>
                 <button onClick={() => setIsDataModalOpen(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-color)' }}><Settings size={20} /></button>
+                <button onClick={() => setIsSyncOpen(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-color)' }}><RefreshCw size={20} /></button>      
             </div>
         </div>
       </header>
@@ -334,11 +400,22 @@ function App() {
             {selectedTaskId && <div style={{ background: 'var(--accent)', color: 'white', padding: '8px 16px', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.9rem', marginTop: '-10px', animation: 'bounce 1s infinite' }}>Tap a time slot to schedule!</div>}
             
             <div style={{ width: '100%', maxWidth: '400px', marginTop: '10px' }}>
-                <h3 style={{ fontSize: '1rem', borderBottom: '1px solid var(--clock-border)', paddingBottom: '10px' }}>Today's Schedule</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--clock-border)', paddingBottom: '10px', marginBottom: '10px' }}>
+                    <h3 style={{ fontSize: '1rem', margin: 0 }}>Today's Schedule</h3>
+                    {selectedEventIds.size > 0 && (
+                        <button onClick={deleteSelectedEvents} style={{ color: '#ef4444', background: 'rgba(239, 68, 68, 0.1)', border: 'none', borderRadius: '6px', padding: '4px 8px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Trash2 size={14} /> Delete ({selectedEventIds.size})
+                        </button>
+                    )}
+                </div>
                 {visibleEvents.length === 0 ? <p style={{ color: 'var(--text-color)', opacity: 0.6, fontSize: '0.9rem', fontStyle: 'italic' }}>No events scheduled.</p> : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         {visibleEvents.map(e => (
                             <div key={e.id} style={{ padding: '12px', background: 'var(--clock-face)', border: '1px solid var(--clock-border)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                {/* SELECTION CHECKBOX */}
+                                <div onClick={() => toggleEventSelection(e.id)} style={{ padding: '8px', cursor: 'pointer', marginRight: '4px' }}>
+                                    {selectedEventIds.has(e.id) ? <CheckSquare size={20} color="var(--accent)" /> : <Square size={20} color="var(--text-color)" opacity={0.3} />}
+                                </div>
                                 <div onClick={() => handleSlotClick(null, e)} style={{ cursor: 'pointer', flex: 1 }}>
                                     <div style={{ fontWeight: '600' }}>{e.title}</div>
                                     <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>
@@ -346,7 +423,11 @@ function App() {
                                         {e.category && <span style={{ marginLeft: '8px', fontSize: '0.7rem', background: e.color, color: 'white', padding: '2px 6px', borderRadius: '4px', verticalAlign: 'middle' }}>{e.category}</span>}
                                     </div>
                                 </div>
-                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                    {/* COMPLETED TOGGLE */}
+                                    <button onClick={(evt) => toggleEventComplete(evt, e.id)} style={{ background: 'none', border: 'none', padding: 0, color: e.completed ? 'var(--available)' : 'var(--text-color)', opacity: e.completed ? 1 : 0.2 }}>
+                                        {e.completed ? <CheckCircle size={20} /> : <Circle size={20} />}
+                                    </button>
                                     <button onClick={() => setFocusEvent(focusEvent?.id === e.id ? null : e)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: focusEvent?.id === e.id ? 'var(--occupied)' : 'var(--text-color)', opacity: 0.8 }}>{focusEvent?.id === e.id ? <PauseCircle size={20} /> : <PlayCircle size={20} />}</button>
                                     <div style={{ width: 4, height: 30, background: e.color || 'var(--occupied)', borderRadius: 2 }}></div>
                                 </div>
@@ -416,7 +497,7 @@ function App() {
               </div>
           </div>
       )}
-      
+      <SyncModal isOpen={isSyncOpen} onClose={() => setIsSyncOpen(false)} localData={{ events, todos, categories }} onSyncComplete={handleSyncComplete} />
       <EventModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveEvent} onDelete={handleDeleteEvent} initialData={editingEvent} categories={categories} onAddCategory={handleAddCategory} />
       <StatsModal isOpen={isStatsOpen} onClose={() => setIsStatsOpen(false)} events={currentDayEvents} categories={categories} settings={userSettings}/>
       <DataModal isOpen={isDataModalOpen} onClose={() => setIsDataModalOpen(false)} data={{ events, todos, categories }} onRestore={handleRestoreData} onCleanup={handleCleanup} settings={userSettings} onUpdateSettings={handleUpdateSettings}/>
