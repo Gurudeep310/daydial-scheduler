@@ -3,6 +3,7 @@ import Clock from './components/Clock';
 import EventModal from './components/EventModal';
 import StatsModal from './components/StatsModal';
 import DataModal from './components/DataModal';
+import CollapsibleCalendar from './components/CollapsibleCalendar';
 import { 
     Calendar as CalendarIcon, ChevronLeft, ChevronRight, BarChart2, 
     PlayCircle, PauseCircle, CheckSquare, GripVertical, Trash2, Plus, 
@@ -60,6 +61,22 @@ const useThemeColor = (theme) => {
 function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   useThemeColor(theme);
+
+  const [userSettings, setUserSettings] = useState(() => 
+    JSON.parse(localStorage.getItem('scheduler_settings') || JSON.stringify({
+        dailyCapacityHours: 8,
+        sleepStart: '23:00',
+        sleepEnd: '07:00'
+    }))
+   );
+   useEffect(() => {
+        localStorage.setItem('scheduler_settings', JSON.stringify(userSettings));
+    }, [userSettings]);
+
+   const handleUpdateSettings = (newSettings) => {
+        setUserSettings({ ...userSettings, ...newSettings });
+    };
+
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('theme', theme); }, [theme]);
   const toggleTheme = () => { vibrate(30); setTheme(prev => prev === 'light' ? 'dark' : 'light'); };
 
@@ -73,13 +90,11 @@ function App() {
   const [categories, setCategories] = useState(() => JSON.parse(localStorage.getItem('scheduler_categories') || JSON.stringify(DEFAULT_CATEGORIES)));
 
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [currentMonth, setCurrentMonth] = useState(new Date());
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [isDataModalOpen, setIsDataModalOpen] = useState(false);
   const [isTaskDrawerOpen, setIsTaskDrawerOpen] = useState(false);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
   const [focusEvent, setFocusEvent] = useState(null);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
@@ -88,9 +103,7 @@ function App() {
   useBackButton(isStatsOpen, () => setIsStatsOpen(false));
   useBackButton(isDataModalOpen, () => setIsDataModalOpen(false));
   useBackButton(isTaskDrawerOpen, () => setIsTaskDrawerOpen(false));
-  useBackButton(isMenuOpen, () => setIsMenuOpen(false));
   
-  const touchStartX = useRef(null);
   const clockRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -171,9 +184,6 @@ function App() {
   const toggleTodo = (id) => { vibrate(30); setTodos(todos.map(t => t.id === id ? { ...t, completed: !t.completed } : t)); };
   const deleteTodo = (id) => { setTodos(todos.filter(t => t.id !== id)); if (selectedTaskId === id) setSelectedTaskId(null); };
   const handleTaskSelect = (id) => { vibrate(50); if (selectedTaskId === id) setSelectedTaskId(null); else { setSelectedTaskId(id); setIsTaskDrawerOpen(false); } };
-
-  const handleTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; };
-  const handleTouchEnd = (e) => { if (!touchStartX.current) return; const diff = touchStartX.current - e.changedTouches[0].clientX; if (Math.abs(diff) > 50) { if (diff > 0) setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1)); else setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1)); vibrate(30); } touchStartX.current = null; };
   
   const handleDropOnClock = (e) => {
       e.preventDefault(); const todoTitle = e.dataTransfer.getData("todoTitle"); const todoId = e.dataTransfer.getData("todoId"); if (!todoTitle || !clockRef.current) return;
@@ -182,80 +192,98 @@ function App() {
       if (todoId) { setTodos(prev => prev.map(t => t.id === todoId ? { ...t, completed: true } : t)); setSelectedTaskId(null); }
   };
 
-const renderCalendar = () => {
-      const year = currentMonth.getFullYear();
-      const month = currentMonth.getMonth();
-      const daysInMonth = new Date(year, month + 1, 0).getDate();
-      const startDay = new Date(year, month, 1).getDay();
-      const days = [];
-
-      // Empty slots for days before the 1st of the month
-      for (let i = 0; i < startDay; i++) {
-          days.push(<div key={`empty-${i}`} style={{ height: 36 }}></div>);
-      }
-
-      for (let d = 1; d <= daysInMonth; d++) {
-          const currentLoopDate = new Date(year, month, d);
-          const dateStr = formatDate(currentLoopDate);
-          const isSelected = dateStr === formatDate(selectedDate);
-          const isToday = dateStr === formatDate(new Date());
-
-          // Filter and Sort Events for this day
-          const dayEvents = events.filter(e => {
-              // Parse stored date (YYYY-MM-DD) to local midnight to avoid timezone shifts
-              const [y, m, d] = e.date.split('-').map(Number);
-              const eStartDate = new Date(y, m - 1, d);
-
-              // Don't show recurring events before their start date
-              if (currentLoopDate < eStartDate) return false;
-
-              if (e.date === dateStr) return true;
-              if (e.recurrence === 'daily') return true;
-              if (e.recurrence === 'weekly') return eStartDate.getDay() === currentLoopDate.getDay();
-              if (e.recurrence === 'monthly') return eStartDate.getDate() === currentLoopDate.getDate();
-              return false;
-          }).sort((a, b) => a.start.localeCompare(b.start)); // Sort by time
-
-          // Generate dots (Max 4)
-          const dotColors = dayEvents.map(e => e.color || '#f97316').slice(0, 4);
-
-          days.push(
-              <button 
-                  key={d} 
-                  onClick={() => { setSelectedDate(currentLoopDate); vibrate(20); }} 
-                  style={{ 
-                      height: 36, 
-                      background: isSelected ? 'var(--accent)' : 'transparent', 
-                      color: isSelected ? 'white' : (isToday ? 'var(--accent)' : 'var(--text-color)'), 
-                      border: isToday && !isSelected ? '1px solid var(--accent)' : 'none', 
-                      borderRadius: '8px', 
-                      cursor: 'pointer', 
-                      fontSize: '0.9rem', 
-                      fontWeight: isSelected || isToday ? 'bold' : 'normal', 
-                      position: 'relative', 
-                      display: 'flex', 
-                      flexDirection: 'column', 
-                      alignItems: 'center', 
-                      justifyContent: 'center' 
-                  }}
-              >
-                  {d}
-                  {/* Render Dots: Only if not selected, to keep selection clean */}
-                  {dotColors.length > 0 && !isSelected && (
-                      <div style={{ position: 'absolute', bottom: 3, display: 'flex', gap: '2px' }}>
-                          {dotColors.map((color, idx) => (
-                              <span key={idx} style={{ width: 4, height: 4, borderRadius: '50%', backgroundColor: color }} />
-                          ))}
-                      </div>
-                  )}
-              </button>
-          );
-      }
-      return days;
+  const handleTimeRangeSelect = ({ start, end }) => {
+      vibrate(50);
+      setEditingEvent({ 
+        id: null, 
+        title: '', 
+        color: categories[0].color, 
+        category: categories[0].name, 
+        date: formatDate(selectedDate), 
+        start: start, 
+        end: end, 
+        description: '', 
+        recurrence: 'none' 
+    });
+    setIsModalOpen(true);
   };
 
-  const currentDayEvents = events.filter(e => { const sDate = new Date(formatDate(selectedDate)); const eDate = new Date(e.date); if (sDate < new Date(formatDate(eDate))) return false; if (e.date === formatDate(selectedDate)) return true; if (e.recurrence === 'daily') return true; if (e.recurrence === 'weekly') return eDate.getDay() === sDate.getDay(); if (e.recurrence === 'monthly') return eDate.getDate() === sDate.getDate(); return false; });
-  const visibleEvents = currentDayEvents.sort((a,b) => a.start.localeCompare(b.start));
+  const getDisplayEventsForDate = (targetDate, allEvents) => {
+      const targetStr = formatDate(targetDate); // YYYY-MM-DD
+      const targetStart = new Date(`${targetStr}T00:00:00`);
+      const targetEnd = new Date(`${targetStr}T23:59:59`);
+
+      return allEvents.map(e => {
+          // 1. Calculate specific Event Start/End DateTimes
+          // If e.end < e.start, we assume it ends the next day.
+          const eStartBase = new Date(`${e.date}T${e.start}:00`);
+          let eEndBase = new Date(`${e.date}T${e.end}:00`);
+          
+          if (eEndBase < eStartBase) {
+              eEndBase.setDate(eEndBase.getDate() + 1);
+          }
+
+          // Handle Recurrence (Simple Projection)
+          // Ideally, a recurrence library handles this, but for this simpler app:
+          // We only check if the *recurrence rule* lands on 'targetDate'.
+          
+          let effectiveStart = eStartBase;
+          let effectiveEnd = eEndBase;
+          let isRelevant = false;
+
+          // Check Recurrence matches Target Date
+          if (e.recurrence === 'daily') {
+             isRelevant = true; // Happens every day
+             // Project times to target date
+             effectiveStart = new Date(`${targetStr}T${e.start}:00`);
+             effectiveEnd = new Date(`${targetStr}T${e.end}:00`);
+             if (effectiveEnd < effectiveStart) effectiveEnd.setDate(effectiveEnd.getDate() + 1);
+          } 
+          else if (e.recurrence === 'weekly' && eStartBase.getDay() === targetDate.getDay()) {
+             isRelevant = true;
+             effectiveStart = new Date(`${targetStr}T${e.start}:00`);
+             effectiveEnd = new Date(`${targetStr}T${e.end}:00`);
+             if (effectiveEnd < effectiveStart) effectiveEnd.setDate(effectiveEnd.getDate() + 1);
+          }
+          else if (e.date === targetStr) {
+             isRelevant = true; // Is exactly today
+          }
+          // Check "Yesterday's" spillover for non-recurring
+          else {
+             // If event started yesterday (target - 1) and ends after targetStart
+             // (Simple check: is target inside the event range?)
+             if (effectiveStart < targetEnd && effectiveEnd > targetStart) {
+                 isRelevant = true;
+             }
+          }
+
+          if (!isRelevant) return null;
+
+          // 2. CLIP Logic: Slice the event to fit onto the Target Day's Clock
+          // The Clock component only understands 00:00 to 24:00 for the current view.
+          
+          // Intersection Start
+          const showStart = effectiveStart < targetStart ? targetStart : effectiveStart;
+          // Intersection End
+          const showEnd = effectiveEnd > targetEnd ? targetEnd : effectiveEnd;
+
+          // If intersection is invalid (e.g. event is completely in past/future of this day), skip
+          if (showStart >= showEnd) return null;
+
+          // Format back to HH:MM for the Clock
+          const toHHMM = (d) => `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+
+          return {
+              ...e,
+              date: targetStr, // Fake date for display match
+              start: toHHMM(showStart),
+              end: toHHMM(showEnd)
+          };
+      }).filter(Boolean).sort((a,b) => a.start.localeCompare(b.start));
+  };
+
+  const currentDayEvents = getDisplayEventsForDate(selectedDate, events);
+  const visibleEvents = currentDayEvents; // Reuse for the list view
 
   const TaskList = ({ isMobile }) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
@@ -276,7 +304,7 @@ const renderCalendar = () => {
 
   return (
     <>
-      <style>{`@media (max-width: 768px) {.desktop-sidebar { display: none !important; }.mobile-fab { display: flex !important; }.header-actions { display: none; }.mobile-menu-btn { display: block !important; }}.mobile-fab { display: none; }.mobile-menu-btn { display: none; }.task-item:active { transform: scale(0.98); background: var(--clock-border); }button:active { opacity: 0.7; transform: scale(0.95); transition: transform 0.1s; }`}</style>
+      <style>{`@media (max-width: 768px) {.desktop-sidebar { display: none !important; }.mobile-fab { display: flex !important; }.mobile-fab { display: none; }.mobile-menu-btn { display: none; }.task-item:active { transform: scale(0.98); background: var(--clock-border); }button:active { opacity: 0.7; transform: scale(0.95); transition: transform 0.1s; }`}</style>
 
       <header style={{ display: 'flex', justifyContent: 'space-between', width: '100%', marginBottom: '20px', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -289,25 +317,19 @@ const renderCalendar = () => {
                 <button onClick={() => setIsStatsOpen(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-color)' }}><BarChart2 size={20} /></button>
                 <button onClick={() => setIsDataModalOpen(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-color)' }}><Settings size={20} /></button>
             </div>
-            <button className="mobile-menu-btn" onClick={() => setIsMenuOpen(!isMenuOpen)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-color)', padding: '8px' }}>{isMenuOpen ? <X size={24} /> : <Menu size={24} />}</button>
-            {isMenuOpen && (<div style={{ position: 'absolute', top: '100%', right: 0, background: 'var(--clock-face)', border: '1px solid var(--clock-border)', borderRadius: '8px', padding: '8px', display: 'flex', flexDirection: 'column', gap: '8px', zIndex: 50, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', width: '150px' }}><button onClick={() => { setIsStatsOpen(true); setIsMenuOpen(false); }} style={{ display: 'flex', gap: 10, alignItems: 'center', background: 'none', border: 'none', padding: '12px', color: 'var(--text-color)' }}><BarChart2 size={16}/> Stats</button><button onClick={() => { setIsDataModalOpen(true); setIsMenuOpen(false); }} style={{ display: 'flex', gap: 10, alignItems: 'center', background: 'none', border: 'none', padding: '12px', color: 'var(--text-color)' }}><Settings size={16}/> Backup</button></div>)}
         </div>
       </header>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', width: '100%', justifyContent: 'center', paddingBottom: '80px' }}>
           <main style={{ flex: '1', minWidth: '320px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
-            <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} style={{ width: '100%', maxWidth: '320px', background: 'var(--clock-face)', padding: '16px', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                    <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1))} style={{ background: 'none', border: 'none', padding: '8px', color: 'var(--text-color)' }}><ChevronLeft size={24} /></button>
-                    <div style={{ fontWeight: '600' }}>{currentMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}</div>
-                    <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1))} style={{ background: 'none', border: 'none', padding: '8px', color: 'var(--text-color)' }}><ChevronRight size={24} /></button>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center', marginBottom: '4px' }}>{['S','M','T','W','T','F','S'].map(d => <div key={d} style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-color)', opacity: 0.6 }}>{d}</div>)}</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>{renderCalendar()}</div>
-            </div>
+           <CollapsibleCalendar 
+                selectedDate={selectedDate}
+                onDateSelect={(date) => { setSelectedDate(date); vibrate(20); }}
+                events={events}
+            />
 
             <div ref={clockRef} onDragOver={(e) => e.preventDefault()} onDrop={handleDropOnClock} style={{ width: '100%', maxWidth: 320, aspectRatio: '1/1', border: selectedTaskId ? '2px dashed var(--accent)' : 'none', borderRadius: '50%', transition: 'border 0.3s', position: 'relative', touchAction: 'none' }}>
-                <Clock events={currentDayEvents} onSlotClick={handleSlotClick} focusEvent={focusEvent} />
+                <Clock events={currentDayEvents} onSlotClick={handleSlotClick} onTimeRangeSelect={handleTimeRangeSelect} focusEvent={focusEvent} settings={userSettings}/>
             </div>
             {selectedTaskId && <div style={{ background: 'var(--accent)', color: 'white', padding: '8px 16px', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.9rem', marginTop: '-10px', animation: 'bounce 1s infinite' }}>Tap a time slot to schedule!</div>}
             
@@ -341,6 +363,44 @@ const renderCalendar = () => {
           </aside>
       </div>
 
+      <footer style={{ 
+          width: '100%', 
+          textAlign: 'center', 
+          padding: '24px', 
+          marginTop: 'auto', 
+          borderTop: '1px solid var(--clock-border)',
+          color: 'var(--text-color)', 
+          opacity: 0.8,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px',
+          alignItems: 'center',
+          fontSize: '0.9rem'
+      }}>
+          <div style={{ fontWeight: '600' }}>
+              DayDial &copy; {new Date().getFullYear()}
+          </div>
+          
+          <p style={{ margin: 0, fontStyle: 'italic', opacity: 0.7 }}>
+              "Plan your day, own your time."
+          </p>
+
+          <div style={{ 
+              marginTop: '8px', 
+              fontSize: '0.75rem', 
+              opacity: 0.6, 
+              background: 'var(--clock-border)', 
+              padding: '4px 10px', 
+              borderRadius: '12px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px'
+          }}>
+             ✨ Made with AI
+          </div>
+      </footer>
+      {/* ----------------------- */}
+
       {!isModalOpen && !isStatsOpen && !isDataModalOpen && (
           <button className="mobile-fab" onClick={() => { setIsTaskDrawerOpen(true); vibrate(30); }} style={{ position: 'fixed', bottom: '20px', right: '20px', width: '56px', height: '56px', borderRadius: '50%', background: 'var(--accent)', color: 'white', border: 'none', boxShadow: '0 4px 12px rgba(59, 130, 246, 0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, cursor: 'pointer' }}>
               <List size={24} />
@@ -358,8 +418,8 @@ const renderCalendar = () => {
       )}
       
       <EventModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveEvent} onDelete={handleDeleteEvent} initialData={editingEvent} categories={categories} onAddCategory={handleAddCategory} />
-      <StatsModal isOpen={isStatsOpen} onClose={() => setIsStatsOpen(false)} events={currentDayEvents} categories={categories} />
-      <DataModal isOpen={isDataModalOpen} onClose={() => setIsDataModalOpen(false)} data={{ events, todos, categories }} onRestore={handleRestoreData} onCleanup={handleCleanup} />
+      <StatsModal isOpen={isStatsOpen} onClose={() => setIsStatsOpen(false)} events={currentDayEvents} categories={categories} settings={userSettings}/>
+      <DataModal isOpen={isDataModalOpen} onClose={() => setIsDataModalOpen(false)} data={{ events, todos, categories }} onRestore={handleRestoreData} onCleanup={handleCleanup} settings={userSettings} onUpdateSettings={handleUpdateSettings}/>
     </>
   );
 }
